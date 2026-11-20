@@ -7,7 +7,8 @@ export const scheduler = new Hono();
 scheduler.post('/daily-post', async (c) => {
   try {
     const post = await createDailyPost();
-    return c.json({ status: 'success', postId: post.id }, 200);
+    if (!post) return c.json({ status: 'success', message: 'already being created' }, 200);
+    return c.json({ status: 'success', postId: post.id, created: post.created }, 200);
   } catch (error) {
     console.error(`Daily post failed: ${error}`);
     return c.json({ status: 'error' }, 500);

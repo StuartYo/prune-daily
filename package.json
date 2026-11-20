@@ -2,11 +2,12 @@
   "private": true,
   "name": "prune-daily",
   "version": "0.1.0",
+  "description": "Prune: a daily bonsai pruning puzzle for Reddit. Everyone gets the same sapling; six snips and four seasons to grow it into today's shape.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "deploy": "npm run test:types && npm run lint && devvit upload",
+    "deploy": "npm run build && npm run check:config && npm run test:types && npm run lint && devvit upload",
     "dev": "devvit playtest",
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
@@ -16,7 +17,8 @@
     "test:unit": "node --test scripts/*.test.ts",
     "local": "vite --config vite.local.config.ts",
     "local:build": "vite build --config vite.local.config.ts",
-    "calendar": "node scripts/calendar.ts"
+    "calendar": "node scripts/calendar.ts",
+    "check:config": "node scripts/check-devvit-config.mjs"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -18,6 +18,9 @@ export type Store = {
   set(key: string, value: string): Promise<void>;
   hGet(key: string, field: string): Promise<string | undefined>;
   hSet(key: string, field: string, value: string): Promise<void>;
+  /** Sets the field only if it is not there yet. True if this call set it. */
+  hSetNX(key: string, field: string, value: string): Promise<boolean>;
+  hDel(key: string, field: string): Promise<void>;
   hGetAll(key: string): Promise<Record<string, string>>;
   zAdd(key: string, member: string, score: number): Promise<void>;
   zIncrBy(key: string, member: string, by: number): Promise<number>;
@@ -41,6 +44,7 @@ const K = {
   watered: (d: string, viewer: string) => `prune:watered:${d}:${viewer}`,
   streak: (u: string) => `prune:streak:${u}`,
   post: (id: string) => `prune:post:${id}`,
+  dayPost: (d: string) => `prune:dayPost:${d}`,
 };
 
 // Rank key: score first, fewer snips breaks ties.
@@ -72,11 +76,25 @@ export const dayForPost = async (s: Store, postId: string | undefined) => {
 
 export const rememberPost = (s: Store, postId: string, day: string) => s.set(K.post(postId), day);
 
+// One post per day, whoever asks first (scheduler, install trigger, mod menu).
+// claim → create post → recordDayPost; on failure releaseDayPost so a retry can.
+export type DayPostClaim = { claimed: true } | { claimed: false; postId: string | undefined };
+export const claimDayPost = async (s: Store, day: string): Promise<DayPostClaim> => {
+  if (await s.hSetNX(K.dayPost(day), 'claim', String(Date.now()))) return { claimed: true };
+  return { claimed: false, postId: await s.hGet(K.dayPost(day), 'post') };
+};
+export const recordDayPost = async (s: Store, day: string, postId: string) => {
+  await s.hSet(K.dayPost(day), 'post', postId);
+  await rememberPost(s, postId, day);
+};
+export const releaseDayPost = (s: Store, day: string) => s.hDel(K.dayPost(day), 'claim');
+
 const readStreak = async (s: Store, u: string, today: string): Promise<Streak> => {
   const raw = await s.get(K.streak(u));
   const st: Streak = raw ? (JSON.parse(raw) as Streak) : { count: 0, best: 0, last: '' };
   // A streak you can still extend today is alive; older than yesterday is gone.
-  if (st.last && st.last !== today && st.last !== shiftDay(today, -1)) return { ...st, count: 0 };
+  // (last can be later than `today` when someone opens an old post.)
+  if (st.last && st.last < shiftDay(today, -1)) return { ...st, count: 0 };
   return st;
 };
 
@@ -148,17 +166,33 @@ export const submit = async (
     snips: r.snipsUsed,
     at: Date.now(),
   };
-  await s.hSet(K.plays(day), username, JSON.stringify(stored));
+  // hSetNX: if two requests from the same player race, only one is stored.
+  const first = await s.hSetNX(K.plays(day), username, JSON.stringify(stored));
+  if (!first) {
+    const won = await myPlay(s, day, username);
+    if (!won) return { error: 'could not save' };
+    return { type: 'submit', played: won, streak: await readStreak(s, username, day), flair: null, histogram: await histogram(s, day) };
+  }
   await s.zAdd(K.rank(day), username, rankValue(stored.score, stored.snips));
 
-  const prev = await readStreak(s, username, day);
-  const count = prev.last === shiftDay(day, -1) ? prev.count + 1 : prev.last === day ? prev.count : 1;
-  const streak: Streak = { count, best: Math.max(prev.best, count), last: day };
-  await s.set(K.streak(username), JSON.stringify(streak));
+  const raw = await s.get(K.streak(username));
+  const prev: Streak = raw ? (JSON.parse(raw) as Streak) : { count: 0, best: 0, last: '' };
+  let streak: Streak;
+  let flair: string | null;
+  if (prev.last && day <= prev.last) {
+    // An old post (or today again): playing it never changes the streak.
+    streak = prev;
+    flair = null;
+  } else {
+    const count = prev.last === shiftDay(day, -1) ? prev.count + 1 : 1;
+    streak = { count, best: Math.max(prev.best, count), last: day };
+    await s.set(K.streak(username), JSON.stringify(streak));
+    flair = flairText(streak);
+  }
 
   const played = await myPlay(s, day, username);
   if (!played) return { error: 'could not save' };
-  return { type: 'submit', played, streak, flair: flairText(streak), histogram: await histogram(s, day) };
+  return { type: 'submit', played, streak, flair, histogram: await histogram(s, day) };
 };
 
 export const grove = async (s: Store, day: string, viewer: string, limit = 24): Promise<GroveResponse> => {

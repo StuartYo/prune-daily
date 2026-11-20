@@ -48,6 +48,17 @@ const store: Store = {
     (d.h[k] ??= {})[f] = v;
     save();
   },
+  hSetNX: async (k, f, v) => {
+    const h = (d.h[k] ??= {});
+    if (f in h) return false;
+    h[f] = v;
+    save();
+    return true;
+  },
+  hDel: async (k, f) => {
+    if (d.h[k]) delete d.h[k][f];
+    save();
+  },
   hGetAll: async (k) => ({ ...(d.h[k] ?? {}) }),
   zAdd: async (k, m, s) => {
     (d.z[k] ??= {})[m] = s;

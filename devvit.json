@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "<% name %>",
+  "name": "prune-daily",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -16,26 +16,32 @@
     "dir": "dist/server",
     "entry": "index.cjs"
   },
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "user",
+      "asUser": ["SUBMIT_COMMENT"]
+    }
+  },
   "menu": {
     "items": [
       {
-        "label": "Create a new post",
-        "description": "<% name %>",
+        "label": "Post today's Prune",
+        "description": "Daily bonsai puzzle: post today's sapling if it is not up yet",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
-      },
-      {
-        "label": "Example form",
-        "description": "Show a simple form",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/example-form"
       }
     ]
   },
-  "forms": {
-    "exampleForm": "/internal/form/example-submit"
+  "scheduler": {
+    "tasks": {
+      "daily-post": {
+        "endpoint": "/internal/scheduler/daily-post",
+        "cron": "0 0 * * *"
+      }
+    }
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"

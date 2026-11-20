@@ -53,6 +53,13 @@ const memStore = (): Store => {
     set: async (k, v) => void kv.set(k, v),
     hGet: async (k, f) => h.get(k)?.get(f),
     hSet: async (k, f, v) => void (h.get(k) ?? h.set(k, new Map()).get(k)!).set(f, v),
+    hSetNX: async (k, f, v) => {
+      const hh = h.get(k) ?? h.set(k, new Map()).get(k)!;
+      if (hh.has(f)) return false;
+      hh.set(f, v);
+      return true;
+    },
+    hDel: async (k, f) => void h.get(k)?.delete(f),
     hGetAll: async (k) => Object.fromEntries(h.get(k) ?? []),
     zAdd: async (k, m, s) => void (z.get(k) ?? z.set(k, new Map()).get(k)!).set(m, s),
     zIncrBy: async (k, m, by) => {
@@ -93,4 +100,72 @@ test('cannot water your own tree or before playing', async () => {
   assert.ok(!('error' in w) && w.water === 1);
   const w2 = await logic.water(s, day, 'bob', 'alice');
   assert.ok(!('error' in w2) && w2.water === 1, 'one drop per person');
+});
+
+test('playing an old post does not reset the streak', async () => {
+  const s = memStore();
+  const d0 = logic.shiftDay(day, -2);
+  const d1 = logic.shiftDay(day, -1);
+  await logic.submit(s, d0, 'alice', []);
+  await logic.submit(s, d1, 'alice', []);
+  const today = await logic.submit(s, day, 'alice', []);
+  assert.ok(!('error' in today) && today.streak.count === 3);
+  // Now alice opens a post from last week. Her 3-day streak must stay.
+  const old = await logic.submit(s, logic.shiftDay(day, -7), 'alice', []);
+  assert.ok(!('error' in old));
+  if ('error' in old) return;
+  assert.equal(old.streak.count, 3, 'streak unchanged');
+  assert.equal(old.streak.last, day, 'last day unchanged');
+  assert.equal(old.flair, null, 'no flair rewrite for an old post');
+  const init = await logic.init(s, day, 'alice');
+  assert.equal(init.streak.count, 3, 'still 3 when she opens today again');
+  const tomorrow = await logic.submit(s, logic.shiftDay(day, 1), 'alice', []);
+  assert.ok(!('error' in tomorrow) && tomorrow.streak.count === 4, 'and tomorrow extends it to 4');
+});
+
+test('daily post: only the first of the three callers creates it', async () => {
+  const s = memStore();
+  // scheduler, install trigger and mod menu all fire at once
+  const claims = await Promise.all([1, 2, 3].map(() => logic.claimDayPost(s, day)));
+  assert.equal(claims.filter((c) => c.claimed).length, 1, 'exactly one claim wins');
+  await logic.recordDayPost(s, day, 't3_abc');
+  const later = await logic.claimDayPost(s, day);
+  assert.deepEqual(later, { claimed: false, postId: 't3_abc' }, 'later callers get the existing post');
+  assert.equal(await logic.dayForPost(s, 't3_abc'), day);
+  // a failed attempt releases the claim so a retry can post
+  const other = logic.shiftDay(day, 1);
+  assert.ok((await logic.claimDayPost(s, other)).claimed);
+  await logic.releaseDayPost(s, other);
+  assert.ok((await logic.claimDayPost(s, other)).claimed, 'retry after failure can claim');
+});
+
+test('two submits racing on the same day: one is stored, both get the same result', async () => {
+  const base = memStore();
+  let playWrites = 0;
+  const s: Store = {
+    ...base,
+    hSet: async (k, f, v) => {
+      if (k.startsWith('prune:plays:')) playWrites++;
+      return base.hSet(k, f, v);
+    },
+    hSetNX: async (k, f, v) => {
+      const ok = await base.hSetNX(k, f, v);
+      if (ok && k.startsWith('prune:plays:')) playWrites++;
+      return ok;
+    },
+  };
+  // Both requests read "not played yet" before either writes.
+  const [a, b] = await Promise.all([
+    logic.submit(s, day, 'alice', p.parMoves),
+    logic.submit(s, day, 'alice', []),
+  ]);
+  assert.ok(!('error' in a) && !('error' in b));
+  if ('error' in a || 'error' in b) return;
+  assert.equal(playWrites, 1, 'the play is written once, never overwritten');
+  assert.equal(a.played.score, b.played.score, 'both responses show the one stored play');
+  assert.deepEqual(a.played.moves, b.played.moves);
+  const g = await logic.grove(s, day, 'alice');
+  assert.equal(g.players, 1);
+  assert.equal(g.trees.length, 1);
+  assert.equal([a.streak.count, b.streak.count].sort().join(','), '1,1', 'streak counted once');
 });

@@ -10,6 +10,10 @@ export const redisStore: Store = {
   hSet: async (k, f, v) => {
     await redis.hSet(k, { [f]: v });
   },
+  hSetNX: async (k, f, v) => (await redis.hSetNX(k, f, v)) === 1,
+  hDel: async (k, f) => {
+    await redis.hDel(k, [f]);
+  },
   hGetAll: async (k) => (await redis.hGetAll(k)) ?? {},
   zAdd: async (k, member, score) => {
     await redis.zAdd(k, { member, score });
