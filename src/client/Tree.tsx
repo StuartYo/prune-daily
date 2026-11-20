@@ -212,7 +212,7 @@ export const TreeView = ({
                     strokeWidth={0.35}
                   />
                   {k > 0 && (
-                    <text className="bud-num" y={0.45} textAnchor="middle" fontSize={1.3}>
+                    <text className="bud-num" y={0.55} textAnchor="middle" fontSize={1.55}>
                       {k}
                     </text>
                   )}

@@ -440,7 +440,7 @@ const App = () => {
                   </span>
                 )}
               </p>
-              {result.histogram.length > 0 && <Histogram h={result.histogram} mine={played.score} par={puzzle.par} />}
+              {result.histogram.length > 0 && !shareText && <Histogram h={result.histogram} mine={played.score} par={puzzle.par} />}
               {result.flair && <p className="muted small">Your flair here now reads “{result.flair}”.</p>}
               <div className="actions col">
                 <button className="btn primary" onClick={(e) => void doShare(e)}>
