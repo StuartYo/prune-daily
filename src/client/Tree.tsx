@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   TUNE,
   WORLD_H,
@@ -11,6 +11,7 @@ import {
   type Target,
   type Tree,
 } from '../shared/sim';
+import { MIN_TAP_WORLD, TAP_RADIUS_PX, pickBranch } from './tap';
 
 const Y = (y: number) => WORLD_H - y;
 
@@ -25,6 +26,11 @@ type Props = {
   showTarget?: boolean | undefined;
   compact?: boolean | undefined; // grove thumbnails: no buds, lighter detail
   label?: string | undefined;
+  /** First-play demo: buds that gained growth (id -> +n) and the branch the pointer is on. */
+  budsUp?: Map<number, number> | undefined;
+  pointAt?: number | null | undefined;
+  /** Crop the view to the pot and today's shape (the play screen) instead of the whole world. */
+  fit?: boolean | undefined;
 };
 
 export const TargetShape = ({ target, id }: { target: Target; id: string }) => (
@@ -69,6 +75,9 @@ export const TreeView = ({
   showTarget = true,
   compact,
   label,
+  budsUp,
+  pointAt,
+  fit,
 }: Props) => {
   const alive = useMemo(() => tree.segs.filter((s) => s.alive), [tree]);
   const byId = useMemo(() => new Map(alive.map((s) => [s.id, s])), [alive]);
@@ -111,10 +120,73 @@ export const TreeView = ({
   const isNew = (s: Seg) => growing && s.born === tree.season && tree.season > 0;
   const delay = (s: Seg) => `${Math.max(0, s.depth - minNewDepth) * 140}ms`;
 
+  // Pointer position -> world units, then snap to the nearest branch.
+  const pick = (e: ReactPointerEvent<SVGElement> | ReactMouseEvent<SVGElement>) => {
+    const svg = (e.currentTarget as SVGElement).ownerSVGElement ?? (e.currentTarget as SVGSVGElement);
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const w = pt.matrixTransform(m.inverse());
+    const radius = Math.max(MIN_TAP_WORLD, TAP_RADIUS_PX / m.a);
+    return pickBranch(alive, w.x, WORLD_H - w.y, radius);
+  };
+  const pointer = pointAt != null ? byId.get(pointAt) : undefined;
+
+  // Touch: press shows which branch you are on (it turns clay), slide to
+  // adjust, lift to snip. Mouse: hover previews, click snips.
+  const pressed = useRef<number | null | undefined>(undefined);
+  const onDown = (e: ReactPointerEvent<SVGGElement>) => {
+    if (e.pointerType === 'mouse') return;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    pressed.current = pick(e);
+    onHover?.(pressed.current);
+  };
+  const onMove = (e: ReactPointerEvent<SVGGElement>) => {
+    if (e.pointerType === 'mouse') onHover?.(pick(e));
+    else if (pressed.current !== undefined) {
+      pressed.current = pick(e);
+      onHover?.(pressed.current);
+    }
+  };
+  const onUp = (e: ReactPointerEvent<SVGGElement>) => {
+    if (e.pointerType === 'mouse' || pressed.current === undefined) return;
+    const id = pressed.current;
+    pressed.current = undefined;
+    onHover?.(null);
+    if (id != null) onSnip?.(id);
+  };
+  const onClickMouse = (e: ReactMouseEvent<SVGGElement>) => {
+    // touch taps are handled on pointerup; this is mouse, pen-as-mouse and
+    // synthetic clicks
+    if ((e.nativeEvent as PointerEvent).pointerType && (e.nativeEvent as PointerEvent).pointerType !== 'mouse') return;
+    const id = pick(e);
+    if (id != null) onSnip?.(id);
+  };
+
+  // View box: whole world, or cropped to pot + target shape with a margin.
+  const vb = useMemo(() => {
+    if (!fit) return { x: 0, y: 0, w: WORLD_W, h: WORLD_H };
+    let x0 = 22;
+    let x1 = 78;
+    let top = 20;
+    for (const e of puzzle.target.ellipses) {
+      x0 = Math.min(x0, e.cx - e.rx);
+      x1 = Math.max(x1, e.cx + e.rx);
+      top = Math.max(top, e.cy + e.ry);
+    }
+    x0 = Math.max(0, x0 - 5);
+    x1 = Math.min(WORLD_W, x1 + 5);
+    top = Math.min(WORLD_H, top + 5);
+    return { x: x0, y: Y(top), w: x1 - x0, h: top };
+  }, [fit, puzzle.target]);
+
   return (
     <svg
-      viewBox={`0 0 ${WORLD_W} ${WORLD_H}`}
-      className="tree-svg"
+      viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+      style={fit ? { aspectRatio: `${vb.w} / ${vb.h}` } : undefined}
+      className={`tree-svg${fit ? ' fit' : ''}${onSnip ? ' playable' : ''}`}
       role="img"
       aria-label={label ?? 'Bonsai tree'}
       onPointerLeave={() => onHover?.(null)}
@@ -211,10 +283,19 @@ export const TreeView = ({
                     stroke="var(--bark)"
                     strokeWidth={0.35}
                   />
+                  {budsUp?.has(s.id) && <circle r={2.6} className="bud-up-ring" />}
                   {k > 0 && (
                     <text className="bud-num" y={0.55} textAnchor="middle" fontSize={1.55}>
                       {k}
                     </text>
+                  )}
+                  {budsUp?.has(s.id) && (
+                    <g className="bud-up" transform="translate(2.4 -3.6)">
+                      <rect x={-0.2} y={-2} width={4.4} height={2.9} rx={0.8} />
+                      <text x={2} y={0.2} textAnchor="middle" fontSize={2}>
+                        +{budsUp.get(s.id)}
+                      </text>
+                    </g>
                   )}
                 </g>
               );
@@ -222,9 +303,30 @@ export const TreeView = ({
         </g>
       )}
 
-      {/* hit areas: deeper branches on top so thin twigs stay tappable */}
+      {/* demo pointer (first play only) */}
+      {pointer && (
+        <g className="demo-pointer" transform={`translate(${(pointer.x0 + pointer.x1) / 2} ${Y((pointer.y0 + pointer.y1) / 2)})`}>
+          <circle r={3.4} />
+          <circle r={0.9} className="dot" />
+        </g>
+      )}
+
+      {/* hit area: one layer for the whole tree. A tap snaps to the nearest
+          branch within TAP_RADIUS_PX, so thin twigs are as easy to hit as
+          thick ones. The thin lines only carry data-id and a tooltip. */}
       {onSnip && (
-        <g>
+        <g
+          className="hit-layer"
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={() => {
+            pressed.current = undefined;
+            onHover?.(null);
+          }}
+          onClick={onClickMouse}
+        >
+          <rect x={0} y={0} width={WORLD_W} height={WORLD_H} fill="transparent" />
           {[...alive]
             .filter((s) => s.id !== 0)
             .sort((a, b) => a.depth - b.depth)
@@ -240,8 +342,6 @@ export const TreeView = ({
                 strokeLinecap="round"
                 className="hit"
                 data-id={s.id}
-                onPointerEnter={(e) => e.pointerType === 'mouse' && onHover?.(s.id)}
-                onClick={() => onSnip(s.id)}
               >
                 <title>Snip this branch</title>
               </line>

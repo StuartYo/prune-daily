@@ -2,7 +2,16 @@
 const { chromium } = require(require('child_process').execSync('npm root -g').toString().trim() + '/playwright');
 const [out, day, movesJson] = process.argv.slice(2);
 const moves = JSON.parse(movesJson);
-const sizes = [[1440, 900], [390, 844], [1920, 945], [1366, 768]];
+const sizes = (process.argv[5] ? JSON.parse(process.argv[5]) : [[1440, 900], [390, 844], [1920, 945], [1366, 768]]);
+// Tap/click a branch at 60% of its length, in page pixels (the tree snaps
+// taps to the nearest branch, so this is what a real finger does).
+const branchPoint = (page, id) => page.evaluate((id) => {
+  const el = document.querySelector(`.hit[data-id="${id}"]`);
+  const m = el.getScreenCTM();
+  const [x1, y1, x2, y2] = ['x1', 'y1', 'x2', 'y2'].map((a) => +el.getAttribute(a));
+  const f = 0.6;
+  return [(x1 + (x2 - x1) * f) * m.a + m.e, (y1 + (y2 - y1) * f) * m.d + m.f];
+}, id);
 (async () => {
   const browser = await chromium.launch({ channel: 'chrome' });
   for (const [w, h] of sizes) {
@@ -12,6 +21,7 @@ const sizes = [[1440, 900], [390, 844], [1920, 945], [1366, 768]];
     page.on('pageerror', (e) => errors.push(String(e)));
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
     const tag = `${w}`;
+    await page.addInitScript(() => localStorage.setItem('prune-demo-seen', '1'));
     await page.goto(`http://localhost:5199/splash.html?day=${day}&reset=1`);
     await page.setViewportSize({ width: w, height: w < 500 ? 512 : 512 });
     await page.waitForSelector('.splash-title');
@@ -22,7 +32,8 @@ const sizes = [[1440, 900], [390, 844], [1920, 945], [1366, 768]];
     await page.screenshot({ path: `${out}/${tag}_1_start.png` });
     for (let s = 0; s < moves.length; s++) {
       for (const id of moves[s]) {
-        await page.locator(`.hit[data-id="${id}"]`).dispatchEvent('click');
+        const [x, y] = await branchPoint(page, id);
+        if (w < 500) await page.touchscreen.tap(x, y); else await page.mouse.click(x, y);
         await page.waitForTimeout(350);
       }
       if (s === 0) await page.screenshot({ path: `${out}/${tag}_2_snipped.png` });

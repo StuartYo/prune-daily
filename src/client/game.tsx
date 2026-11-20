@@ -3,7 +3,7 @@ import './index.css';
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { GroveTree, InitResponse, MyPlay, Streak } from '../shared/api';
-import { allocation, play, replayTo, scoreTree, type Puzzle } from '../shared/sim';
+import { allocation, play, replayTo, scoreTree, snip, type Puzzle, type Tree } from '../shared/sim';
 import { ArrowLeft, Copy, Droplet, Flame, MessageSquare, Scissors, Sprout, Trees, Undo } from './icons';
 import { api, LOCAL } from './net';
 import { canRunAsUser, showToast } from './platform';
@@ -15,6 +15,50 @@ const LEVEL = ['', 'Gentle', 'Easy', 'Medium', 'Tricky', 'Hard'];
 const GROW_MS = 1500;
 
 type View = 'play' | 'result' | 'grove';
+
+// First-play demo: about 8 seconds, plays once, can be replayed or skipped.
+// Step 0 points at a branch, 1 marks it, 2 shows it snipped with the buds that
+// gained growth, 3 tells you to grow.
+const DEMO_STEPS = [
+  { ms: 1700, text: 'Tap a branch to snip it.' },
+  { ms: 1100, text: 'Tap a branch to snip it.' },
+  { ms: 3000, text: 'Its growth goes to the buds you keep. Those numbers go up.' },
+  { ms: 2600, text: 'Then press Grow. Bigger numbers grow more. Fill the hatched shape.' },
+];
+const DEMO_KEY = 'prune-demo-seen';
+const demoSeen = () => {
+  try {
+    return localStorage.getItem(DEMO_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const markDemoSeen = () => {
+  try {
+    localStorage.setItem(DEMO_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+};
+
+// A small snip (a bare tip if possible) that makes the most other bud
+// numbers go up, so the demo shows the rule without wrecking the tree.
+const demoBranch = (t: Tree, sp: Puzzle['species']) => {
+  const before = allocation(t, sp);
+  const alive = t.segs.filter((s) => s.alive);
+  const size = (id: number): number => 1 + alive.filter((c) => c.parent === id).reduce((n, c) => n + size(c.id), 0);
+  let best: { id: number; score: number } | null = null;
+  for (const s of alive) {
+    if (s.id === 0 || s.depth < 1) continue;
+    const after = allocation(snip(t, s.id), sp);
+    let gain = 0;
+    for (const [id, k] of after) if (k > (before.get(id) ?? 0)) gain++;
+    if (gain === 0) continue;
+    const score = gain * 10 - size(s.id) * 6;
+    if (!best || score > best.score) best = { id: s.id, score };
+  }
+  return best ? best.id : null;
+};
 type Progress = { grown: number[][]; pending: number[] };
 
 const progressKey = (day: string) => `prune-progress:${day}`;
@@ -111,6 +155,7 @@ const App = () => {
   const [shareMsg, setShareMsg] = useState<string | null>(null);
   const [shareText, setShareText] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
+  const [demo, setDemo] = useState<number | null>(null); // demo step, null = off
 
   const load = useCallback(async () => {
     try {
@@ -124,7 +169,9 @@ const App = () => {
         setView('result');
         api.grove().then((g) => setResult((r) => (r ? { ...r, histogram: g.histogram } : r))).catch(() => undefined);
       } else {
-        setProg(loadProgress(d.puzzle.day));
+        const p = loadProgress(d.puzzle.day);
+        setProg(p);
+        if (!demoSeen() && p.grown.length === 0 && p.pending.length === 0) setDemo(0);
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not load today’s tree.');
@@ -144,7 +191,32 @@ const App = () => {
     () => (puzzle ? replayTo({ ...puzzle, parMoves: [] }, prog.grown, prog.pending) : null),
     [puzzle, prog],
   );
-  const alloc = useMemo(() => (tree && puzzle ? allocation(tree, puzzle.species) : undefined), [tree, puzzle]);
+  const demoOn = demo != null;
+  const demoId = useMemo(() => (demoOn && tree && puzzle ? demoBranch(tree, puzzle.species) : null), [demoOn, tree, puzzle]);
+  const shownTree = useMemo(() => (tree && demo === 2 && demoId != null ? snip(tree, demoId) : tree), [tree, demo, demoId]);
+  const alloc = useMemo(() => (shownTree && puzzle ? allocation(shownTree, puzzle.species) : undefined), [shownTree, puzzle]);
+  const budsUp = useMemo(() => {
+    if (demo !== 2 || !tree || !puzzle || !alloc) return undefined;
+    const before = allocation(tree, puzzle.species);
+    const up = new Map<number, number>();
+    for (const [id, k] of alloc) if (k > (before.get(id) ?? 0)) up.set(id, k - (before.get(id) ?? 0));
+    return up;
+  }, [demo, tree, puzzle, alloc]);
+
+  useEffect(() => {
+    if (demo == null) return;
+    if (demoId == null || demo >= DEMO_STEPS.length) {
+      markDemoSeen();
+      const t = window.setTimeout(() => setDemo(null), 0);
+      return () => window.clearTimeout(t);
+    }
+    const t = window.setTimeout(() => setDemo(demo + 1), DEMO_STEPS[demo]?.ms ?? 1000);
+    return () => window.clearTimeout(t);
+  }, [demo, demoId]);
+  const stopDemo = () => {
+    markDemoSeen();
+    setDemo(null);
+  };
   const live = useMemo(() => (tree && puzzle ? scoreTree(tree, puzzle.target) : null), [tree, puzzle]);
 
   if (err) {
@@ -178,6 +250,10 @@ const App = () => {
   };
 
   const onSnip = (id: number) => {
+    if (demo != null) {
+      stopDemo();
+      return;
+    }
     if (!canSnip) {
       if (view === 'play' && !growing) {
         showToast(left <= 0 ? 'No snips left today. Let it grow.' : `Only ${puzzle.perSeason} snips per season. Grow first.`);
@@ -339,15 +415,27 @@ const App = () => {
         <div className="stage-tree">
           <TreeView
             puzzle={puzzle}
-            tree={done ? finalTree : tree}
+            tree={done ? finalTree : (shownTree ?? tree)}
             alloc={done ? undefined : alloc}
-            hover={canSnip ? hover : null}
+            hover={demo === 1 ? demoId : canSnip && demo == null ? hover : null}
+            budsUp={budsUp}
+            pointAt={demo === 0 || demo === 1 ? demoId : null}
+            fit
             onHover={setHover}
             onSnip={done ? undefined : onSnip}
             growing={growing}
             label={`Today's ${puzzle.species.name}, target shape ${puzzle.target.style}`}
           />
         </div>
+        {demo != null && demo < DEMO_STEPS.length && (
+          <div className="demo-cap" role="status">
+            <span className="demo-step tnum">{Math.min(3, demo === 0 ? 1 : demo)}/3</span>
+            <span>{DEMO_STEPS[demo]?.text}</span>
+            <button className="demo-skip" onClick={stopDemo}>
+              Skip
+            </button>
+          </div>
+        )}
         <div className="legend" aria-hidden>
           <span>
             <i className="lg-target" /> today’s shape
@@ -392,6 +480,14 @@ const App = () => {
             </div>
             <p className="hint" aria-live="polite">
               {hint}
+              {season === 0 && used === 0 && demo == null && (
+                <>
+                  {' '}
+                  <button className="link" onClick={() => setDemo(0)}>
+                    Show me
+                  </button>
+                </>
+              )}
             </p>
             <div className="actions">
               <button className="btn secondary" onClick={undo} disabled={prog.pending.length === 0 || growing}>

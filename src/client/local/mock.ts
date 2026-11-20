@@ -157,7 +157,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const mockApi = {
   init: async () => {
     await prepare();
-    return { ...(await logic.init(store, DAY, ME, true)) };
+    return { ...(await logic.init(store, DAY, ME, !params.has('clean'))) };
   },
   submit: async (moves: number[][]) => {
     await prepare();
