@@ -8,8 +8,8 @@ Built with Devvit Web for the Reddit Game of the Day Hackathon (2026).
 
 ## How a round goes
 
-1. Open today's post. The sapling stands in its pot with the target shape hatched behind it.
-2. Tap a branch to snip it. Each bud shows a number: how many new branches it will push out next season. Snip one side and you can watch the numbers on the other side go up.
+1. Open today's post. The sapling stands in its pot with the target shape hatched behind it. The first time, an 8-second demo snips one twig and marks the buds that gained growth.
+2. Tap a branch to snip it (a tap goes to the nearest branch within 24px; on a phone, press, slide and lift). Each bud shows a number: how many new branches it will push out next season. Snip one side and you can watch the numbers on the other side go up.
 3. Press **Grow Spring**. The tree grows, you get up to two more snips, and so on through Summer, Autumn and Winter.
 4. You get a crown-match score, the day's par, your rank, and a histogram of how everyone did.
 5. Post your result as a comment (written by the server, no spoilers), then walk through **today's grove**: every player's tree, regrown from their snips, side by side. Water the ones you like.
@@ -42,8 +42,9 @@ Par replays to the same score on all 28 days. The slowest day took 473 ms to gen
 
 | Feature | Where |
 |---|---|
-| Daily post at 00:00 UTC | `devvit.json` scheduler → `src/server/routes/scheduler.ts` |
+| Daily post at 00:00 UTC | `devvit.json` scheduler task `daily-post` (`0 0 * * *`) → `src/server/routes/scheduler.ts` |
 | Mods can post today's tree by hand | subreddit menu "Post today's Prune" |
+| One post per day, whoever asks first | `prune:dayPost:<day>` claim in `src/shared/logic.ts`, used by `src/server/core/post.ts` |
 | Post result as a comment under your name | `POST /api/share`, `reddit.submitComment({ runAs: 'USER' })` |
 | Streak in user flair | `reddit.setUserFlair` after each finished round |
 | Grove of everyone's trees, watering, yesterday's pick | Redis sorted sets, `src/shared/logic.ts` |
@@ -51,7 +52,7 @@ Par replays to the same score on all 28 days. The slowest day took 473 ms to gen
 
 ## Fair play
 
-The client never sends a score. It sends the list of snips (for example `[[12,13],[5,9],[16,25],[]]`), and the server replays the whole tree with the same code the browser uses (`src/shared/sim.ts`) to compute the result. One submission per player per day. Direction math uses a rounded lookup table, so the tree can't come out differently on two JavaScript engines.
+The client never sends a score. It sends the list of snips (for example `[[12,13],[5,9],[16,25],[]]`), and the server replays the whole tree with the same code the browser uses (`src/shared/sim.ts`) to compute the result. One submission per player per day, stored with `hSetNX` so two requests at once still save one round. Playing an old post never changes your streak. Direction math uses a rounded lookup table, so the tree can't come out differently on two JavaScript engines.
 
 Because a play is just a few numbers, the grove can show every player's full tree without storing any images.
 
@@ -60,14 +61,17 @@ Because a play is just a few numbers, the grove can show every player's full tre
 ```bash
 npm install
 npm run local         # local preview in a normal browser, sample players, no Reddit account
-npm run test:unit     # rules, replay, anti-cheat, streak and watering tests
+npm run test:unit     # rules, replay, anti-cheat, streak, watering, daily-post and double-submit tests
+npm run check:config  # validate devvit.json with the Devvit CLI's own schema parser
 npm run calendar      # regenerate results/calendar.json
 npm run login         # Reddit login for Devvit
 npm run dev           # playtest on your test subreddit
 npm run deploy        # upload a new version
 ```
 
-The local preview (`vite.local.config.ts`) runs the real game rules against an in-browser store. Everyone in its grove except "you" is a sample player, and the page says so in a bar at the top. None of that code ships to Reddit.
+The local preview (`vite.local.config.ts`) runs the real game rules against an in-browser store. Everyone in its grove except "you" is a sample player, and the page says so in a bar at the top (`?clean` hides the bar for recordings). None of that code ships to Reddit.
+
+Not covered by the local preview or the unit tests: the scheduled post, commenting as the player and setting flair. Those go through Devvit APIs that only run on Reddit.
 
 ## Layout
 
