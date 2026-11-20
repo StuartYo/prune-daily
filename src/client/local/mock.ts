@@ -177,6 +177,6 @@ export const mockApi = {
   },
   share: async () => {
     const r = await logic.shareText(store, DAY, ME);
-    return { ...r, message: r.ok ? 'Local preview: on Reddit this posts as a comment under your name.' : r.message };
+    return { ...r, message: r.ok ? 'Preview: on Reddit this becomes your comment.' : r.message };
   },
 };

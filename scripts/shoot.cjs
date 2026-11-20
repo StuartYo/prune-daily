@@ -22,12 +22,12 @@ const branchPoint = (page, id) => page.evaluate((id) => {
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
     const tag = `${w}`;
     await page.addInitScript(() => localStorage.setItem('prune-demo-seen', '1'));
-    await page.goto(`http://localhost:5199/splash.html?day=${day}&reset=1`);
+    await page.goto(`http://localhost:5199/splash.html?day=${day}&reset=1${process.env.SHOT_QUERY ?? ""}`);
     await page.setViewportSize({ width: w, height: w < 500 ? 512 : 512 });
     await page.waitForSelector('.splash-title');
     await page.screenshot({ path: `${out}/${tag}_0_splash.png` });
     await page.setViewportSize({ width: w, height: h });
-    await page.goto(`http://localhost:5199/game.html?day=${day}`);
+    await page.goto(`http://localhost:5199/game.html?day=${day}${process.env.SHOT_QUERY ?? ""}`);
     await page.waitForSelector('.hit');
     await page.screenshot({ path: `${out}/${tag}_1_start.png` });
     for (let s = 0; s < moves.length; s++) {

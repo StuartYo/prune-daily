@@ -340,7 +340,7 @@ const App = () => {
   const hint = (() => {
     if (growing) return `${SEASONS[season - 1] ?? 'The season'} is growing…`;
     if (season === 0 && used === 0)
-      return 'Tap a branch to snip it off. Watch the numbers on the other buds go up: that is where the growth goes instead.';
+      return 'Tap a branch to snip it. The numbers on the other buds go up: that is where its growth goes.';
     if (prog.pending.length > 0 && seasonLeft > 0 && left > 0)
       return 'Snip one more, or grow. Each season grows the same amount, so the buds you keep get all of it.';
     if (prog.pending.length > 0 && seasonLeft === 0 && left > 0)
